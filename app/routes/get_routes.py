@@ -20,5 +20,5 @@ def predictive_statistics():
     filtered_statistics = [s for s in statistics if
                            hundred_days_ago <= datetime.strptime(s.date, "%Y-%m-%d").date() < today]
     filtered_statistics.sort(key=lambda x: x.date)
-    res = predict(filtered_statistics, model_root_dir="lstm/weight/20240630224019-GRU", )
+    res = predict(filtered_statistics, model_root_dir="time_series_analysis/weight/20240630224019-GRU", )
     return jsonify(ResponseWrapper.success().set_data(res).to_dict())
