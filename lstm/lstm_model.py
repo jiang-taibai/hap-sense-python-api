@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import MinMaxScaler
 
 from tools.从数据库获取数据 import get_data
@@ -26,6 +28,23 @@ class LSTMModel(nn.Module):
         h_0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)  # 初始化隐藏状态
         c_0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)  # 初始化细胞状态
         out, _ = self.lstm(x.to(device), (h_0, c_0))
+        out = self.fc(out[:, -1, :])  # 取最后一个时间步的输出
+        out = out.view(-1, self.predicted_days, out.shape[-1] // self.predicted_days)
+        return out
+
+
+class GRUModel(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, num_layers=1, predicted_days=1):
+        super(GRUModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.predicted_days = predicted_days
+        self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size * predicted_days)
+
+    def forward(self, x):
+        h_0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)  # 初始化隐藏状态
+        out, _ = self.gru(x.to(device), h_0)
         out = self.fc(out[:, -1, :])  # 取最后一个时间步的输出
         out = out.view(-1, self.predicted_days, out.shape[-1] // self.predicted_days)
         return out
@@ -131,9 +150,11 @@ def load_scaler(save_path):
 def train(input_train_set, input_test_set, output_train_set, output_test_set,
           save_path=f'weight/{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}',
           hidden_size=50, num_layers=1, num_epochs=50, batch_size=32, predicted_days=1):
-    (input_train_set, output_train_set, scaler_population, scaler_households, scaler_planting_households) = normalization(input_train_set, output_train_set)
+    (input_train_set, output_train_set, scaler_population, scaler_households,
+     scaler_planting_households) = normalization(input_train_set, output_train_set)
     (input_test_set, output_test_set,
-     _, _, _) = normalization(input_test_set, output_test_set, scaler_population, scaler_households, scaler_planting_households)
+     _, _, _) = normalization(input_test_set, output_test_set, scaler_population, scaler_households,
+                              scaler_planting_households)
 
     input_train_set = torch.tensor(input_train_set, dtype=torch.float32)
     output_train_set = torch.tensor(output_train_set, dtype=torch.float32)
@@ -143,7 +164,7 @@ def train(input_train_set, input_test_set, output_train_set, output_test_set,
     input_size = input_train_set.shape[2]
     output_size = output_train_set.shape[2]
 
-    model = LSTMModel(input_size, hidden_size, output_size, num_layers, predicted_days).to(device)
+    model = GRUModel(input_size, hidden_size, output_size, num_layers, predicted_days).to(device)
 
     # 定义损失函数和优化器
     criterion = nn.MSELoss()
@@ -198,7 +219,7 @@ def predict(data, model_root_dir):
         output_size = config['output_size']
         num_layers = config['num_layers']
         predicted_days = config['predicted_days']
-    model = LSTMModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size,
+    model = GRUModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size,
                       num_layers=num_layers, predicted_days=predicted_days).to(device)
     model.load_state_dict(torch.load(os.path.join(model_root_dir, 'model.pth')))
 
