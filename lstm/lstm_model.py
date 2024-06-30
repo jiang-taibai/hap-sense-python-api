@@ -58,12 +58,17 @@ def build_dataset(data, previous_days=10, predicted_days=1):
     # 构建输入和输出
     input_ground_truth, output_ground_truth = [], []
     for i in range(len(data) - previous_days - predicted_days):
-        input_ground_truth.append(data[i:(i + previous_days)])
+        input_ground_truth.append(data[i:(i + previous_days), 3:])
         output_ground_truth.append(data[(i + previous_days):(i + previous_days + predicted_days), 3:])
 
     # 转换为 PyTorch 的张量
-    input_ground_truth = np.array(input_ground_truth).astype(np.float32)
-    output_ground_truth = np.array(output_ground_truth).astype(np.float32)
+    input_ground_truth = np.array(input_ground_truth).astype(np.float64)
+    output_ground_truth = np.array(output_ground_truth).astype(np.float64)
+
+    # 打乱数组，但是保持输入和输出的对应关系
+    permutation = np.random.permutation(len(input_ground_truth))
+    input_ground_truth = input_ground_truth[permutation]
+    output_ground_truth = output_ground_truth[permutation]
 
     # 划分训练集和测试集
     split = int(len(input_ground_truth) * 0.8)
@@ -73,39 +78,62 @@ def build_dataset(data, previous_days=10, predicted_days=1):
     return input_train_set, input_test_set, output_train_set, output_test_set
 
 
-def normalization(input_set, output_set):
+def normalization(input_set, output_set=None, scaler_population=None, scaler_households=None,
+                  scaler_planting_households=None):
     input_set_2d = input_set.reshape(-1, input_set.shape[-1])
-    output_set_2d = output_set.reshape(-1, output_set.shape[-1])
-    scaler_date = MinMaxScaler()
-    scaler_statistics = MinMaxScaler()
-    scaler_date.fit(input_set_2d[:, :3])
-    scaler_statistics.fit(input_set_2d[:, 3:])
-    input_set_2d[:, :3] = scaler_date.transform(input_set_2d[:, :3])
-    input_set_2d[:, 3:] = scaler_statistics.transform(input_set_2d[:, 3:])
-    output_set_2d = scaler_statistics.transform(output_set_2d)
+    scaler_population = MinMaxScaler() if scaler_population is None else scaler_population
+    scaler_households = MinMaxScaler() if scaler_households is None else scaler_households
+    scaler_planting_households = MinMaxScaler() if scaler_planting_households is None else scaler_planting_households
+    scaler_population.fit(input_set_2d[:, 0:1])
+    scaler_households.fit(input_set_2d[:, 1:2])
+    scaler_planting_households.fit(input_set_2d[:, 2:3])
+    input_set_2d[:, 0:1] = scaler_population.transform(input_set_2d[:, 0:1])
+    input_set_2d[:, 1:2] = scaler_households.transform(input_set_2d[:, 1:2])
+    input_set_2d[:, 2:3] = scaler_planting_households.transform(input_set_2d[:, 2:3])
     input_set = input_set_2d.reshape(input_set.shape)
-    output_set = output_set_2d.reshape(output_set.shape)
-    return input_set, output_set, scaler_date, scaler_statistics
+    if output_set is not None:
+        output_set_2d = output_set.reshape(-1, output_set.shape[-1])
+        output_set_2d[:, 0:1] = scaler_population.transform(output_set_2d[:, 0:1])
+        output_set_2d[:, 1:2] = scaler_households.transform(output_set_2d[:, 1:2])
+        output_set_2d[:, 2:3] = scaler_planting_households.transform(output_set_2d[:, 2:3])
+        output_set = output_set_2d.reshape(output_set.shape)
+        return input_set, output_set, scaler_population, scaler_households, scaler_planting_households
+    return input_set, scaler_population, scaler_households, scaler_planting_households
 
 
-def de_normalization(data, scaler_date, scaler_statistics):
+def de_normalization(data, scaler_population, scaler_households, scaler_planting_households):
     data_2d = data.reshape(-1, data.shape[-1])
-    if data_2d.shape[1] == 3:
-        data_2d = scaler_statistics.inverse_transform(data_2d)
-        return data_2d.reshape(data.shape)
-    else:
-        data_2d[:, :3] = scaler_date.inverse_transform(data_2d[:, :3])
-        data_2d[:, 3:] = scaler_statistics.inverse_transform(data_2d[:, 3:])
-        return data_2d.reshape(data.shape)
+    data_2d[:, 0:1] = scaler_population.inverse_transform(data_2d[:, 0:1])
+    data_2d[:, 1:2] = scaler_households.inverse_transform(data_2d[:, 1:2])
+    data_2d[:, 2:3] = scaler_planting_households.inverse_transform(data_2d[:, 2:3])
+    return data_2d.reshape(data.shape)
+
+
+def save_scaler(save_path, scaler_population, scaler_households, scaler_planting_households):
+    with open(os.path.join(save_path, 'scaler_population.pkl'), 'wb') as f:
+        pickle.dump(scaler_population, f)
+    with open(os.path.join(save_path, 'scaler_households.pkl'), 'wb') as f:
+        pickle.dump(scaler_households, f)
+    with open(os.path.join(save_path, 'scaler_planting_households.pkl'), 'wb') as f:
+        pickle.dump(scaler_planting_households, f)
+
+
+def load_scaler(save_path):
+    with open(os.path.join(save_path, 'scaler_population.pkl'), 'rb') as f:
+        scaler_population = pickle.load(f)
+    with open(os.path.join(save_path, 'scaler_households.pkl'), 'rb') as f:
+        scaler_households = pickle.load(f)
+    with open(os.path.join(save_path, 'scaler_planting_households.pkl'), 'rb') as f:
+        scaler_planting_households = pickle.load(f)
+    return scaler_population, scaler_households, scaler_planting_households
 
 
 def train(input_train_set, input_test_set, output_train_set, output_test_set,
-          save_path='model.pth',
+          save_path=f'weight/{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}',
           hidden_size=50, num_layers=1, num_epochs=50, batch_size=32, predicted_days=1):
-    (input_train_set, output_train_set,
-     train_set_date_scaler, train_set_statistics_scaler) = normalization(input_train_set, output_train_set)
+    (input_train_set, output_train_set, scaler_population, scaler_households, scaler_planting_households) = normalization(input_train_set, output_train_set)
     (input_test_set, output_test_set,
-     test_set_date_scaler, test_set_statistics_scaler) = normalization(input_test_set, output_test_set)
+     _, _, _) = normalization(input_test_set, output_test_set, scaler_population, scaler_households, scaler_planting_households)
 
     input_train_set = torch.tensor(input_train_set, dtype=torch.float32)
     output_train_set = torch.tensor(output_train_set, dtype=torch.float32)
@@ -128,16 +156,23 @@ def train(input_train_set, input_test_set, output_train_set, output_test_set,
         for i in range(0, len(input_train_set), batch_size):
             input_batch = input_train_set[i:i + batch_size].to(device)
             output_batch = output_train_set[i:i + batch_size].to(device)
-            outputs = model(input_batch)    # outputs.shape=torch.Size([32, 10, 3])
+            outputs = model(input_batch)  # outputs.shape=torch.Size([32, 10, 3])
             loss = criterion(outputs, output_batch)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
         if (epoch + 1) % 10 == 0:
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.8f}')
 
     # 保存模型
-    torch.save(model.state_dict(), save_path)
+    os.makedirs(save_path, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(save_path, 'model.pth'))
+    save_scaler(save_path, scaler_population, scaler_households, scaler_planting_households)
+    with open(os.path.join(save_path, 'config.pkl'), 'wb') as f:
+        pickle.dump({
+            'input_size': input_size, 'hidden_size': hidden_size, 'output_size': output_size,
+            'num_layers': num_layers, 'predicted_days': predicted_days
+        }, f)
 
     # 测试
     model.eval()
@@ -145,33 +180,43 @@ def train(input_train_set, input_test_set, output_train_set, output_test_set,
         predictions = model(input_test_set)
 
     # 打印部分预测值和真实值对比
-    print("Predictions:", de_normalization(predictions[:5].cpu().numpy(),
-                                           test_set_date_scaler,
-                                           test_set_statistics_scaler).tolist())
-    print("Actual:", de_normalization(output_test_set[:5].numpy(),
-                                      test_set_date_scaler,
-                                      test_set_statistics_scaler).tolist())
+    print("Predictions:",
+          de_normalization(predictions[:5].cpu().numpy(), scaler_population, scaler_households,
+                           scaler_planting_households).tolist())
+    print("Actual:", de_normalization(output_test_set[:5].numpy(), scaler_population, scaler_households,
+                                      scaler_planting_households).tolist())
     return model
 
 
-def predict(data, model_path='model.pth', input_size=10, hidden_size=50, output_size=1, num_layers=1):
-    model = LSTMModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size, num_layers=num_layers)
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
+def predict(data, model_root_dir):
+    # 加载模型
+    scaler_population, scaler_households, scaler_planting_households = load_scaler(model_root_dir)
+    with open(os.path.join(model_root_dir, 'config.pkl'), 'rb') as f:
+        config = pickle.load(f)
+        input_size = config['input_size']
+        hidden_size = config['hidden_size']
+        output_size = config['output_size']
+        num_layers = config['num_layers']
+        predicted_days = config['predicted_days']
+    model = LSTMModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size,
+                      num_layers=num_layers, predicted_days=predicted_days).to(device)
+    model.load_state_dict(torch.load(os.path.join(model_root_dir, 'model.pth')))
 
-    # 归一化数据
-    scaler = MinMaxScaler()
-    data = scaler.fit_transform(data)
-
-    # 转换为 PyTorch 的张量
-    input_data = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
+    # 数据预处理
+    data = [d.to_array() for d in data]
+    data = [date_str_to_array(daily_data[0]) + daily_data[1:] for daily_data in data]
+    (data, _, _, _, _) = normalization(np.array(data), None, scaler_population, scaler_households,
+                                       scaler_planting_households)
 
     # 预测
+    model.eval()
+    input_data = torch.tensor(data, dtype=torch.float32).unsqueeze(0).to(device)
     with torch.no_grad():
         prediction = model(input_data)
 
-    # 反归一化
-    prediction = scaler.inverse_transform(prediction.numpy())
+    # 数据后处理
+    prediction = de_normalization(prediction.cpu().numpy(), scaler_population, scaler_households,
+                                  scaler_planting_households).squeeze().tolist()
     return prediction
 
 
@@ -182,11 +227,11 @@ def main():
         'predicted_days': 10,
     }
     train_configs = {
-        'save_path': f'weight/{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}-test.pth',
-        'hidden_size': 50 * 10,
+        'save_path': f'weight/{datetime.datetime.now().strftime("%Y%m%d%H%M%S")}-使用统一的Scaler',
+        'hidden_size': 100,
         'num_layers': 1,
         'num_epochs': 100,
-        'batch_size': 32,
+        'batch_size': 64,
         'predicted_days': 10,
     }
 
