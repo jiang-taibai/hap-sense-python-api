@@ -6,8 +6,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import MinMaxScaler
 
 from tools.从数据库获取数据 import get_data
@@ -220,14 +218,14 @@ def predict(data, model_root_dir):
         num_layers = config['num_layers']
         predicted_days = config['predicted_days']
     model = GRUModel(input_size=input_size, hidden_size=hidden_size, output_size=output_size,
-                      num_layers=num_layers, predicted_days=predicted_days).to(device)
+                     num_layers=num_layers, predicted_days=predicted_days).to(device)
     model.load_state_dict(torch.load(os.path.join(model_root_dir, 'model.pth')))
 
     # 数据预处理
     data = [d.to_array() for d in data]
-    data = [date_str_to_array(daily_data[0]) + daily_data[1:] for daily_data in data]
-    (data, _, _, _, _) = normalization(np.array(data), None, scaler_population, scaler_households,
-                                       scaler_planting_households)
+    data = [daily_data[1:] for daily_data in data]
+    (data, _, _, _) = normalization(np.array(data), None, scaler_population, scaler_households,
+                                    scaler_planting_households)
 
     # 预测
     model.eval()
