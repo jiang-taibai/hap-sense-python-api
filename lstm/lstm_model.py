@@ -7,9 +7,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.preprocessing import MinMaxScaler
-from tqdm import tqdm
 
-from tools.dataset.从数据库获取数据 import get_data
+from tools.从数据库获取数据 import get_data
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
